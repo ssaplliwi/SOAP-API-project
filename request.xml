@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:tns="urn:mini.soap">
+    <soapenv:Header/>
+    <soapenv:Body>
+        <tns:say_hello>
+            <tns:name>World</tns:name>
+        </tns:say_hello>
+    </soapenv:Body>
+</soapenv:Envelope>
