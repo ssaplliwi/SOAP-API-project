@@ -1,23 +1,13 @@
-# Byte-compiled / cache
 __pycache__/
-*.py[cod]
-
-# Virtual env
-.venv/
-venv/
-env/
-
-# Packaging / build
-build/
-dist/
-*.egg-info/
-.eggs/
-
-# Logs / OS junk
+*.pyc
+*.pyo
+*.pyd
 *.log
-.DS_Store
-Thumbs.db
-
-# IDE
+.venv/
+env/
+venv/
+*.db
 .vscode/
 .idea/
+.DS_Store
+Thumbs.db

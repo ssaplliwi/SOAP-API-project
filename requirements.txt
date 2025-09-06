@@ -1,3 +1,4 @@
 spyne
 lxml
 bcrypt
+sqlalchemy

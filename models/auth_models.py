@@ -1,11 +1,19 @@
 from spyne import ComplexModel, Boolean, Unicode
+from .common_base import TnsModel
 
-class RegisterResponse(ComplexModel):
+class RegisterRequest(TnsModel):
+    username = Unicode
+    password = Unicode
+
+class RegisterResponse(TnsModel):
     status = Boolean
     message = Unicode
 
-class LoginResponse(ComplexModel):
+class LoginRequest(TnsModel):
+    username = Unicode
+    password = Unicode
+
+class LoginResponse(TnsModel):
     status = Boolean
     message = Unicode
     session_key = Unicode
-    

@@ -1,138 +1,137 @@
-from spyne import ServiceBase, rpc, Unicode, Integer
-from models.account_models import (
-    Account, CreateAccountResponse, GetAccountResponse,
-    GetBalanceResponse, MoneyActionResponse, TransferResponse
+from spyne import ServiceBase, rpc
+from models import (
+    AccountSummary,
+    CreateAccountRequest, CreateAccountResponse,
+    ListAccountsRequest, ListAccountsResponse,
+    GetBalanceRequest, GetBalanceResponse,
+    DepositRequest, WithdrawRequest, MoneyActionResponse,
 )
-from storage.memory import sessions, accounts
+from db import SessionLocal
+from db_models import User, Account, Session as DBSession
+
+def _get_username_by_session(db, session_key: str):
+    s = db.query(DBSession).filter(DBSession.session_key == session_key).first()
+    return s.username if s else None
 
 class AccountService(ServiceBase):
-    @rpc(Unicode, _returns=CreateAccountResponse)
-    def create_account(ctx, session_key):
-        username = sessions.get(session_key)
-        if not username:
-            return CreateAccountResponse(status=False, message="Invalid session", account=None)
-        
-        next_idx = len(accounts.get(username, [])) + 1 #neu user chua co account thi tra ve rong (TH chua tao)
-        acc_id = f"ACC{next_idx:03d}"
-        account = {"id": acc_id, "balance" : 0}
-        accounts.setdefault(username, []).append(account)
 
-        return CreateAccountResponse(status=True, message="Account created", account=Account(id=acc_id, balance=0))
+    @rpc(CreateAccountRequest, _returns=CreateAccountResponse)
+    def create_account(ctx, req):
+        db = SessionLocal()
+        try:
+            username = _get_username_by_session(db, req.session_key)
+            if not username:
+                return CreateAccountResponse(status=False, message="Invalid session", account=None)
 
-    @rpc(Unicode, _returns=GetAccountResponse)
-    def get_accounts(ctx, session_key):
-        username = sessions.get(session_key)
-        if not username:
-            return GetAccountResponse(status=False, accounts=[])
+            user = db.query(User).filter(User.username == username).first()
+            if not user:
+                return CreateAccountResponse(status=False, message="User not found", account=None)
 
-        accs = [Account(id=a["id"], balance=a["balance"]) for a in accounts.get(username, [])]
-        return GetAccountResponse(status=True, accounts=accs)
+            count = db.query(Account).filter(Account.owner_id == user.id).count()
+            acc_id = f"ACC{count + 1:03d}"
 
-    @rpc(Unicode, Unicode, _returns=GetBalanceResponse)
-    def get_balance(ctx, session_key, account_id):
-        username = sessions.get(session_key)
-        if not username:
-            return GetBalanceResponse(status=False, message="Invalid session", account_id=account_id, balance=0)
-        
-        for a in accounts.get(username, []):
-            if a["id"] == account_id:
-                return GetBalanceResponse(status=True, message="OK", account_id=account_id, balance=a["balance"])
+            acc = Account(account_id=acc_id, balance=0, owner_id=user.id)
+            db.add(acc)
+            db.commit()
 
-        return GetBalanceResponse(status=False, message="Account not found", account_id=account_id, balance=0)
-
-#api cho nap, rut
-    @rpc(Unicode, Unicode, Integer, _returns=MoneyActionResponse)
-    def deposit(ctx, session_key, account_id, amount):
-        username = sessions.get(session_key)
-        if not username:
-            return MoneyActionResponse(status=False, message="Invalid session", account_id=account_id, balance=0)
-        
-        if amount is None or amount <= 0:
-            return MoneyActionResponse(status=False, message="Amount must be > 0", account_id=account_id, balance=0)
-        
-        for a in accounts.get(username, []):
-            if a["id"] == account_id:
-                a["balance"] += int(amount)
-                return MoneyActionResponse(status=True, message="Deposit OK", account_id=account_id, balance=a["balance"])
-            
-        return MoneyActionResponse(status=False, message="Account not found", account_id=account_id, balance=0)
-
-    @rpc(Unicode, Unicode, Integer, _returns=MoneyActionResponse)
-    def withdraw(ctx, session_key, account_id, amount):
-        username = sessions.get(session_key)
-        if not username:
-            return MoneyActionResponse(status=False, message="Invalid session", account_id=account_id, balance=0)
-
-        if amount is None or amount <= 0:
-            return MoneyActionResponse(status=False, message="Amount must be > 0", account_id=account_id, balance=0)
-        
-        for a in accounts.get(username, []):
-            if a["id"] == account_id:
-                if a["balance"] < int(amount):
-                    return MoneyActionResponse(status=False, message="Insufficient funds", account_id=account_id, balance=a["balance"])
-                a["balance"] -= int(amount)
-                return MoneyActionResponse(status=True, message="Withdraw OK", account_id=account_id, balance=a["balance"])
-
-        return MoneyActionResponse(status=False, message="Account not found", account_id=account_id, balance=0)
-
-#api transfer
-    @rpc(Unicode, Unicode, Unicode, Unicode, Integer, _returns=TransferResponse)
-    def transfer(ctx, session_key, from_account_id, to_username, to_account_id, amount):
-        #ktra phien hien tai
-        username = sessions.get(session_key)
-        if not username:
-            return TransferResponse(status=False, message="Invalid session"
-                                    , from_account_id=from_account_id, to_username=to_username
-                                    , to_account_id=to_account_id, from_balance=0, to_balance=0
+            return CreateAccountResponse(
+                status=True,
+                message="Account created",
+                account=AccountSummary(account_id=acc.account_id, balance=acc.balance),
             )
+        finally:
+            db.close()
 
-        if not from_account_id or not to_username or not to_account_id:
-            return TransferResponse(status=False, message="Missing parameters"
-                                    , from_account_id=from_account_id, to_username=to_username
-                                    , to_account_id=to_account_id, from_balance=0, to_balance=0
-            )
-        
-        if amount is None or amount <= 0:
-            return TransferResponse(status=False, message="Amount must be > 0"
-                                    , from_account_id=from_account_id, to_username=to_username
-                                    , to_account_id=to_account_id, from_balance=0, to_balance=0
-            )
-        #ktra tai khoan nguon co ton tai vs user(phien) hien tai
-        src = None
-        for a in accounts.get(username, []):
-            if a["id"] == from_account_id:
-                src = a
-                break
-        if src is None:
-            return TransferResponse(
-                status=False, message="Source account not found", from_account_id=from_account_id
-                , to_username=to_username, to_account_id=to_account_id, from_balance=0, to_balance=0
-            )
-        
-        #ktra account dich
-        dst = None
-        for a in accounts.get(to_username, []):
-            if a["id"] == to_account_id:
-                dst = a
-                break
-        if dst is None:
-            return TransferResponse(
-                status=False, message="Destination account not found", from_account_id=from_account_id
-                , to_username=to_username, to_account_id=to_account_id, from_balance=src["balance"], to_balance=0
-            )
+    @rpc(ListAccountsRequest, _returns=ListAccountsResponse)
+    def list_accounts(ctx, req):
+        db = SessionLocal()
+        try:
+            username = _get_username_by_session(db, req.session_key)
+            if not username:
+                return ListAccountsResponse(status=False, accounts=[])
 
-        #ktra so du tk nguon
-        amt = int(amount)
-        if src["balance"] < amt:
-            return TransferResponse(
-                status=False, message="Insufficient funds", from_account_id=from_account_id
-                , to_username=to_username, to_account_id=to_account_id, from_balance=src["balance"], to_balance=dst["balance"]
-            )
+            user = db.query(User).filter(User.username == username).first()
+            if not user:
+                return ListAccountsResponse(status=False, accounts=[])
 
-        src["balance"] -= amt
-        dst["balance"] += amt
+            rows = db.query(Account).filter(Account.owner_id == user.id).all()
+            data = [AccountSummary(account_id=a.account_id, balance=a.balance) for a in rows]
+            return ListAccountsResponse(status=True, accounts=data)
+        finally:
+            db.close()
 
-        return TransferResponse(
-            status=True, message="Transfer OK", from_account_id=from_account_id, to_username=to_username
-            , to_account_id=to_account_id, from_balance=src["balance"], to_balance=dst["balance"]
-        )
+    @rpc(GetBalanceRequest, _returns=GetBalanceResponse)
+    def get_balance(ctx, req):
+        db = SessionLocal()
+        try:
+            username = _get_username_by_session(db, req.session_key)
+            if not username:
+                return GetBalanceResponse(status=False, message="Invalid session", account_id=req.account_id, balance=0)
+
+            user = db.query(User).filter(User.username == username).first()
+            if not user:
+                return GetBalanceResponse(status=False, message="User not found", account_id=req.account_id, balance=0)
+
+            acc = (db.query(Account)
+                     .filter(Account.owner_id == user.id, Account.account_id == req.account_id)
+                     .first())
+            if not acc:
+                return GetBalanceResponse(status=False, message="Account not found", account_id=req.account_id, balance=0)
+
+            return GetBalanceResponse(status=True, message="OK", account_id=acc.account_id, balance=acc.balance)
+        finally:
+            db.close()
+
+    @rpc(DepositRequest, _returns=MoneyActionResponse)
+    def deposit(ctx, req):
+        db = SessionLocal()
+        try:
+            username = _get_username_by_session(db, req.session_key)
+            if not username:
+                return MoneyActionResponse(status=False, message="Invalid session", account_id=req.account_id, balance=0)
+
+            if req.amount is None or req.amount <= 0:
+                return MoneyActionResponse(status=False, message="Amount must be > 0", account_id=req.account_id, balance=0)
+
+            user = db.query(User).filter(User.username == username).first()
+            acc = (db.query(Account)
+                     .filter(Account.owner_id == user.id, Account.account_id == req.account_id)
+                     .with_for_update()
+                     .first())
+            if not acc:
+                return MoneyActionResponse(status=False, message="Account not found", account_id=req.account_id, balance=0)
+
+            acc.balance += int(req.amount)
+            db.commit()
+            return MoneyActionResponse(status=True, message="Deposit OK", account_id=acc.account_id, balance=acc.balance)
+        finally:
+            db.close()
+
+    @rpc(WithdrawRequest, _returns=MoneyActionResponse)
+    def withdraw(ctx, req):
+        db = SessionLocal()
+        try:
+            username = _get_username_by_session(db, req.session_key)
+            if not username:
+                return MoneyActionResponse(status=False, message="Invalid session", account_id=req.account_id, balance=0)
+
+            if req.amount is None or req.amount <= 0:
+                return MoneyActionResponse(status=False, message="Amount must be > 0", account_id=req.account_id, balance=0)
+
+            user = db.query(User).filter(User.username == username).first()
+            acc = (db.query(Account)
+                     .filter(Account.owner_id == user.id, Account.account_id == req.account_id)
+                     .with_for_update()
+                     .first())
+            if not acc:
+                return MoneyActionResponse(status=False, message="Account not found", account_id=req.account_id, balance=0)
+
+            amt = int(req.amount)
+            if acc.balance < amt:
+                return MoneyActionResponse(status=False, message="Insufficient funds", account_id=acc.account_id, balance=acc.balance)
+
+            acc.balance -= amt
+            db.commit()
+            return MoneyActionResponse(status=True, message="Withdraw OK", account_id=acc.account_id, balance=acc.balance)
+        finally:
+            db.close()
